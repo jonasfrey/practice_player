@@ -29,6 +29,8 @@ let n_idx_a_o_shader = 0;
 
 
 let o_state = {
+    b_playing: false,
+    o_audio_buffer: null,
     o_webgl_program: null,
     o_audio_context: new (window.AudioContext || window.webkitAudioContext)(),
     o_el_img: null,
@@ -103,12 +105,14 @@ let f_update_shader = function(){
         uniform float iTime;
         uniform vec2 iResolution;
         uniform vec4 iDate;
+        uniform float n_cursor_nor;
     
         uniform sampler2D o_audio_texture_channel0;  // Waveform data passed as a texture
         uniform vec2 o_scl_audio_texture_channel0;
 
         void main() {
             float n_scl_min = min(iResolution.x, iResolution.y);
+            float n_scl_max = max(iResolution.x, iResolution.y);
             vec2 o_trn = (gl_FragCoord.xy-iResolution.xy*.5)/n_scl_min;
             vec2 o_trn2 = gl_FragCoord.xy/iResolution.xy;
             float n_idx_max = o_scl_audio_texture_channel0.x*o_scl_audio_texture_channel0.y;
@@ -119,19 +123,22 @@ let f_update_shader = function(){
             // Get the normalized pixel coordinates (0 to 1 for X and Y)
             float x = gl_FragCoord.x / iResolution.x;
             float y = gl_FragCoord.y / iResolution.y;
-            vec4 o_col = texelFetch(o_audio_texture_channel0, ivec2(n_trn_x_texture, n_trn_y_texture), 0);
-            // vec4 o_col = texture(o_audio_texture_channel0, o_trn);
-            // vec4 o_col = texture(o_audio_texture_channel0, o_trn2);
+            vec4 o_pixel = texelFetch(o_audio_texture_channel0, ivec2(n_trn_x_texture, n_trn_y_texture), 0);
+            // vec4 o_pixel = texture(o_audio_texture_channel0, o_trn);
+            // vec4 o_pixel = texture(o_audio_texture_channel0, o_trn2);
             float n_amp2 = 0.1;
-            float n_range_amp = o_col.r*n_amp2; 
+            float n_range_amp = o_pixel.r*n_amp2; 
             float n_y = (abs(o_trn.y) - n_range_amp);
             n_y = step(0.01, n_y);
+            vec3 o_col2 = vec3(1.);
+            float n_diff_x = abs(o_trn2.x - n_cursor_nor);
+            float n_x_line = smoothstep((1./n_scl_min),0., n_diff_x);
             fragColor = vec4(
-                vec3(
-                    n_y
-                ),
+                (1.-n_y) *vec3(1.) - n_x_line + (n_x_line)*vec3(1., 0., 0.),
                 1.
             );
+            fragColor = clamp(vec4(0.),vec4(1.), fragColor);
+            fragColor +=  (n_x_line)*vec4(1., 0., 0.,1.);
         }
         `
     )
@@ -140,6 +147,7 @@ let f_update_shader = function(){
     o_state.o_ufloc__iDate = o_state.o_webgl_program?.o_ctx.getUniformLocation(o_state.o_webgl_program?.o_shader__program, 'iDate');
     o_state.o_ufloc__iMouse = o_state.o_webgl_program?.o_ctx.getUniformLocation(o_state.o_webgl_program?.o_shader__program, 'iMouse');
     o_state.o_ufloc__iTime = o_state.o_webgl_program?.o_ctx.getUniformLocation(o_state.o_webgl_program?.o_shader__program, 'iTime');
+    o_state.o_ufloc__n_cursor_nor = o_state.o_webgl_program?.o_ctx.getUniformLocation(o_state.o_webgl_program?.o_shader__program, 'n_cursor_nor');
 
     let gl = o_state.o_webgl_program.o_ctx;
     let texture = gl.createTexture();
@@ -272,7 +280,6 @@ document.body.appendChild(o_el_time);
 let n_ms_update_time_last = 0;
 let n_ms_update_time_delta_max = 1000;
 let f_raf = function(){
-
     if(o_state.o_webgl_program){
         let o_date = new Date();
         let n_sec_of_the_day_because_utc_timestamp_does_not_fit_into_f32_value = (o_date.getTime()/1000.)%(60*60*24)
@@ -292,6 +299,14 @@ let f_raf = function(){
         o_state.o_webgl_program?.o_ctx.uniform1f( o_state.o_ufloc__iTime,
             n_sec_of_the_day_because_utc_timestamp_does_not_fit_into_f32_value
         );
+        if(o_state?.o_audio_buffer?.duration){
+            let n = o_state.o_audio_context.currentTime / o_state.o_audio_buffer?.duration;
+            // console.log(n);
+            o_state.o_webgl_program?.o_ctx.uniform1f( o_state.o_ufloc__n_cursor_nor,
+                n
+            );
+        }
+       
        
         let s_time = `${f_s_hms__from_n_ts_ms_utc(o_date.getTime(), 'UTC')}.${((o_date.getTime()/1000)%1).toFixed(3).split('.').pop()}`
         o_el_time.innerText = `UTC: ${s_time}`
@@ -367,8 +382,6 @@ window.addEventListener('pointerdown', (o_e)=>{
 
 
 
-
-
 document.body.appendChild(
     await f_o_html__and_make_renderable(
         {
@@ -395,9 +408,11 @@ document.body.appendChild(
                             reader.onload = function(e) {
                                 const arrayBuffer = e.target.result;
                                 const fileUrl = URL.createObjectURL(file);
+                                
 
-                                o_state.o_audio_context.decodeAudioData(arrayBuffer, function(audioBuffer) {
-                                    const channelData = audioBuffer.getChannelData(0);  // Get PCM data for channel 0
+                                o_state.o_audio_context.decodeAudioData(arrayBuffer, function(o_audiobuffer) {
+                                    o_state.o_audio_buffer = o_audiobuffer
+                                    const channelData = o_audiobuffer.getChannelData(0);  // Get PCM data for channel 0
                             
                                     // Now pass this PCM data to WebGL (see next steps)
                                     console.log('PCM data:', channelData);
@@ -406,6 +421,23 @@ document.body.appendChild(
                                     console.log(waveformArray)
                                     o_state.a_n_f32_audio_data_channel0 = waveformArray;
                                     f_update_shader();
+
+                                    // Create an audio source
+                                    let audioSource = o_state.o_audio_context.createBufferSource();
+                                    audioSource.buffer = o_audiobuffer;
+
+                                    // Connect the audio source to the context's destination (i.e., the speakers)
+                                    audioSource.connect(o_state.o_audio_context .destination);
+
+                                    o_state.o_audio_source = audioSource
+                                    // Start the audio playback
+                                    // audioSource.start();
+                                    window.addEventListener('click',async ()=>{
+                                        let s_function = (!o_state.b_playing) ? 'start' :'stop';
+                                        await o_state.o_audio_source[s_function]();
+                                        o_state.b_playing = !o_state.b_playing;
+                                    })
+
 
                                 });
                             };
