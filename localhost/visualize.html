@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio Waveform Visualization with Section Rendering</title>
+  <style>
+    canvas {
+      border: 1px solid black;
+      width: 100%;
+      height: 150px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Select an Audio File to Visualize</h1>
+  <input type="file" id="audioFile" accept="audio/*">
+
+  <!-- Canvas for the real-time waveform -->
+  <canvas id="waveformCanvas"></canvas>
+
+  <!-- Canvas for the static waveform (rendered section) -->
+  <canvas id="staticWaveformCanvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('waveformCanvas');
+    const ctx = canvas.getContext('2d');
+    const staticCanvas = document.getElementById('staticWaveformCanvas');
+    const staticCtx = staticCanvas.getContext('2d');
+    const audioFileInput = document.getElementById('audioFile');
+
+    // Adjust the canvas width and height
+    canvas.width = window.innerWidth * 0.9;
+    canvas.height = 150;
+    staticCanvas.width = window.innerWidth * 0.9;
+    staticCanvas.height = 150;
+
+    let audioContext;
+    let analyser;
+    let dataArray;
+    let bufferLength;
+    let audioBuffer;
+
+    // Function to visualize the real-time audio data on the canvas
+    function drawWaveform() {
+      // Clear the canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Set line style
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'violet';
+
+      // Draw waveform
+      ctx.beginPath();
+      const sliceWidth = canvas.width / bufferLength;
+      let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0; // Normalize to between 0 and 1
+        const y = (v * canvas.height) / 2; // Scale to canvas height
+
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+
+        x += sliceWidth;
+      }
+
+      ctx.lineTo(canvas.width, canvas.height / 2);
+      ctx.stroke();
+    }
+
+    // Function to render a static waveform of the audio
+    function renderStaticWaveform(start = 0, end = null, currentTime = null) {
+      if (!audioBuffer) return;
+
+      // Clear the static canvas
+      staticCtx.clearRect(0, 0, staticCanvas.width, staticCanvas.height);
+
+      // Set line style for waveform
+      staticCtx.lineWidth = 2;
+      staticCtx.strokeStyle = 'violet';
+
+      // Decode audio data and draw the waveform
+      const rawData = audioBuffer.getChannelData(0); // Get raw PCM data from the first channel
+      const duration = audioBuffer.duration * 1000; // Duration in milliseconds
+      if(end == null){
+            end = 50000
+      }
+        console.log(end)
+
+      // Calculate the start and end sample positions based on the parameters
+      const startSample = Math.floor((start / duration) * rawData.length);
+      const endSample = end ? Math.floor((end / duration) * rawData.length) : rawData.length;
+
+      const sectionLength = endSample - startSample;
+      const sliceWidth = staticCanvas.width / sectionLength;
+      let x = 0;
+
+      staticCtx.beginPath();
+
+      for (let i = startSample; i < endSample; i++) {
+        const v = rawData[i]; // Audio value is between -1.0 and 1.0
+        const y = ((v + 1) / 2) * staticCanvas.height; // Normalize to between 0 and canvas height
+        // console.log(y)
+        if (i === startSample) {
+          staticCtx.moveTo(x, y);
+        } else {
+          staticCtx.lineTo(x, y);
+        }
+
+        x += sliceWidth;
+      }
+
+      staticCtx.lineTo(staticCanvas.width, staticCanvas.height / 2);
+      staticCtx.stroke();
+
+      // If currentTime is passed, draw a red vertical line
+      if (currentTime !== null) {
+        const currentSample = Math.floor((currentTime / duration) * rawData.length);
+        if (currentSample >= startSample && currentSample <= endSample) {
+          const currentX = ((currentSample - startSample) / sectionLength) * staticCanvas.width;
+          staticCtx.beginPath();
+          staticCtx.moveTo(currentX, 0);
+          staticCtx.lineTo(currentX, staticCanvas.height);
+          staticCtx.strokeStyle = 'red';
+          staticCtx.lineWidth = 1;
+          staticCtx.stroke();
+        }
+      }
+    }
+
+    // Function to handle audio file selection
+    audioFileInput.addEventListener('change', function(event) {
+      const file = event.target.files[0];
+      if (file) {
+        const fileUrl = URL.createObjectURL(file);
+
+        // Initialize the AudioContext and Analyser
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+
+        // Fetch the audio file data
+        fetch(fileUrl)
+          .then(response => response.arrayBuffer())
+          .then(arrayBuffer => audioContext.decodeAudioData(arrayBuffer))
+          .then(decodedBuffer => {
+            audioBuffer = decodedBuffer;
+
+            // Load the audio file for real-time playback
+            const audio = new Audio();
+            audio.src = fileUrl;
+            audio.controls = true;
+            document.body.appendChild(audio);
+            audio.play();
+
+            // Connect the audio source to the analyser and audio context
+            const source = audioContext.createMediaElementSource(audio);
+            source.connect(analyser);
+            analyser.connect(audioContext.destination);
+
+            // Visualize the waveform in real-time
+            function visualize() {
+              analyser.getByteTimeDomainData(dataArray); // Get real-time audio data
+              drawWaveform(); // Draw it on the canvas
+              requestAnimationFrame(visualize); // Continue the animation loop
+            }
+
+            visualize(); // Start visualization
+
+            // Render static waveform for the full song by default
+            renderStaticWaveform();
+
+            // You can use the `renderStaticWaveform` function with custom start, end, and current time:
+            // Example: renderStaticWaveform(2000, 8000, 3000);  -> renders from 2s to 8s, marks 3s
+          });
+      }
+    });
+  </script>
+</body>
+</html>
