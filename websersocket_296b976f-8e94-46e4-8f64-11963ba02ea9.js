@@ -2,7 +2,7 @@
 import {
     f_websersocket_serve,
     f_v_before_return_response__fileserver
-} from "https://deno.land/x/websersocket@1.0.3/mod.js"
+} from "https://deno.land/x/websersocket@6.0.1/mod.js"
 
 import {
     O_ws_client
@@ -12,7 +12,7 @@ import { ensureDir } from "https://deno.land/std@0.224.0/fs/ensure_dir.ts";
 import { f_o_config } from "./functions.module.js";
 import {
     f_a_o_entry__from_s_path
-} from "https://deno.land/x/handyhelpers@4.0.7/mod.js"
+} from "https://deno.land/x/handyhelpers@5.0.4/mod.js"
 
 let s_path_abs_file_current = new URL(import.meta.url).pathname;
 let s_path_abs_folder_current = s_path_abs_file_current.split('/').slice(0, -1).join('/');
