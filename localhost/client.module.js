@@ -18,7 +18,7 @@ import {
     f_resize_canvas_from_o_webgl_program,
     f_render_from_o_webgl_program, 
     f_o_state_webgl_shader_audio_visualization
-} from "https://deno.land/x/handyhelpers@5.0.4/mod.js"
+} from "https://deno.land/x/handyhelpers@5.0.5/mod.js"
 
 import {
     f_s_hms__from_n_ts_ms_utc,
@@ -31,11 +31,11 @@ let n_idx_a_o_shader = 0;
 
 
 let o_state = {
+    n_seconds_zoom_range: 5,
     n_id_raf_playing: 0, 
     b_playing: false, 
     a_n_f32_sample_channel0: new Float32Array(),
     a_n_f32_sample_channel1: new Float32Array(),
-    b_playing: false,
     o_audio_buffer: null,
     o_webgl_program: null,
     o_audio_context_source: null,
@@ -49,6 +49,7 @@ let o_state = {
     n_playhead_nor_global: 0., 
     n_playhead_nor_local: 0.,
     o_state_shader_audio_visualization: null,
+    o_state_shader_audio_visualization_zoomed: null,
     n_sec_duration:null,
     n_samples_per_second_samplerate:null,
     n_samples_total:null,
@@ -69,17 +70,8 @@ f_add_css(
         justify-content:center;
         align-items:flex-start;
     }
-    canvas{
-        width: 100%;
-        height: 100%;
-        position:fixed;
-        z-index:-1;
-    }
-    #o_el_time{
-        margin:1rem;
-        background: rgba(0, 0, 0, 0.4);
-        padding: 1rem;
-    }
+    
+   
     button:disabled, button.disabled{
         background: rgb(30, 30, 30);
         color: rgb(20,20,20);
@@ -99,6 +91,22 @@ f_add_css(
         width:100%;
         flex-grow:1;
     }
+    .waveform_zoomed{
+        aspect-ratio:2/1;
+    }
+    .waveform{
+        aspect-ratio:10/1;
+    }
+    .waveform_zoomed, .waveform{
+        position:relative;
+    }
+    .waveform_zoomed canvas, .waveform canvas{
+        position:absolute; 
+        top:0;
+        left: 0;
+        width:100%;
+        height: 100%;
+    }
     ${
         f_s_css_from_o_variables(
             o_variables
@@ -109,25 +117,6 @@ f_add_css(
 
 
 
-
-
-
-
-
-let o_el_time = document.createElement('div');
-o_el_time.id = 'o_el_time'
-document.body.appendChild(o_el_time);
-
-
-
-let n_id_timeout = 0;
-window.onpointermove = function(){
-    clearTimeout(n_id_timeout);
-    o_el_time.style.display = 'block'
-    n_id_timeout = setTimeout(()=>{
-        o_el_time.style.display = 'none'
-    },5000)
-}
 
 
 // Determine the current domain
@@ -170,8 +159,28 @@ window.addEventListener('pointerdown', (o_e)=>{
 
 let f_raf_playing = async function(){
 
-    // console.log(o_state.o_state_shader_audio_visualization.o_audio_context.currentTime);
+    o_state.n_playhead_nor_global = o_state.o_state_shader_audio_visualization.o_audio_context.currentTime/ o_state.n_sec_duration;
+
     await o_state.o_js__playhead._f_render();
+
+
+    let n_nor_range = o_state.n_seconds_zoom_range / o_state.n_sec_duration;
+    let n_nor_playhead = 0.5;
+    let n_diff_glob = (o_state.n_playhead_nor_global-(n_nor_range*n_nor_playhead));
+    if(n_diff_glob < 0.){
+        n_nor_playhead = o_state.n_playhead_nor_global / n_nor_range;
+    }
+
+    o_state.o_state_shader_audio_visualization_zoomed.n_nor_start = Math.max(0, o_state.n_playhead_nor_global-(n_nor_range*n_nor_playhead)); 
+    o_state.o_state_shader_audio_visualization_zoomed.n_nor_end = o_state.o_state_shader_audio_visualization_zoomed.n_nor_start + n_nor_range;
+    o_state.o_state_shader_audio_visualization_zoomed.b_show_playhead = true;
+    o_state.o_state_shader_audio_visualization_zoomed.n_nor_playhead = n_nor_playhead;
+    o_state.o_state_shader_audio_visualization_zoomed.f_render();
+
+
+    o_state.o_state_shader_audio_visualization.b_show_playhead = true;
+    o_state.o_state_shader_audio_visualization.n_nor_playhead = o_state.n_playhead_nor_global;
+    o_state.o_state_shader_audio_visualization.f_render();
 
     o_state.n_id_raf_playing = requestAnimationFrame(f_raf_playing);
 }
@@ -211,6 +220,7 @@ let f_o_assigned = function (s_name, v, o_to_assign_to = o_state) {
 //     }
 // }
 
+
 let f_play_audio = function(n_sec_start){
     cancelAnimationFrame(o_state.n_id_raf_playing);
 
@@ -226,7 +236,7 @@ let f_play_audio = function(n_sec_start){
         o_state.n_id_raf_playing = requestAnimationFrame(f_raf_playing);
     }
 }
-
+o_state.f_play_audio = f_play_audio
 let f_pause_audio = function(){
     o_state.n_playhead_nor_global = o_state.o_state_shader_audio_visualization.o_audio_context.currentTime / o_state.n_sec_duration;
     console.log(o_state.n_playhead_nor_global);
@@ -272,6 +282,10 @@ document.body.appendChild(
                                     o_state.o_state_shader_audio_visualization.f_delete_webgl_stuff();
                                     o_state.o_state_shader_audio_visualization = null;
                                 }
+                                if(o_state.o_state_shader_audio_visualization_zoomed){
+                                    o_state.o_state_shader_audio_visualization_zoomed.f_delete_webgl_stuff();
+                                    o_state.o_state_shader_audio_visualization_zoomed = null;
+                                }
                                 await o_state.o_js__playpause._f_render();
                                 const file = o_e.target.files[0];
                                 
@@ -282,34 +296,69 @@ document.body.appendChild(
 
 
                                         const o_array_buffer_encoded_audio_data = e.target.result;
-                                        
+                                        let o_el_waveform_zoomed = document.querySelector('.waveform_zoomed');
+                                        let o_el_waveform = document.querySelector('.waveform');
                                         o_state.o_state_shader_audio_visualization = await f_o_state_webgl_shader_audio_visualization({
                                             o_array_buffer_encoded_audio_data,
-                                            n_scl_x : 1000,
-                                            n_scl_y : 200 , 
-                                            a_n_rgba_color_amp_peaks: [
-                                                Math.random(),
-                                                Math.random(),
-                                                Math.random(),
-                                                1.
-                                            ],
-                                            a_n_rgba_color_amp_avg: [
-                                                Math.random(),
-                                                Math.random(),
-                                                Math.random(),
-                                                1.
-                                            ]
+                                            n_scl_x_canvas : o_el_waveform?.clientWidth,
+                                            n_scl_y_canvas : o_el_waveform?.clientHeight, 
+                                            a_n_rgba_color_amp_peaks: [1., 0, 0, 1.],
+                                            a_n_rgba_color_amp_avg: [1, 1, 0, 1], 
+                                        }); 
+                                        o_state.o_state_shader_audio_visualization.o_canvas.onclick = function(o_e){
+                                            let n_x = o_e.clientX;
+                                            let o_rect = o_e.target.getBoundingClientRect();
+                                            let n_trn_x_nor = (o_e.clientX - o_rect.left)/o_rect.width;
+                                            n_trn_x_nor = Math.max(0., Math.min(n_trn_x_nor, 1.));
+                                            o_state.n_playhead_nor_global = n_trn_x_nor;
+                                            f_pause_audio();
+                                            f_play_audio(o_state.n_playhead_nor_global*o_state.n_sec_duration);
+                                        }
+                                        o_state.o_state_shader_audio_visualization_zoomed = await f_o_state_webgl_shader_audio_visualization({
+                                            a_n_f32_audio_sample:o_state.o_state_shader_audio_visualization.a_n_f32_audio_sample,
+                                            n_scl_x_canvas : o_el_waveform_zoomed?.clientWidth,
+                                            n_scl_y_canvas : o_el_waveform_zoomed?.clientHeight, 
+                                            a_n_rgba_color_amp_peaks: [1., 0, 0, 1.],
+                                            a_n_rgba_color_amp_avg: [1, 1, 0, 1]
                                         }); 
                                         o_state.n_sec_duration = o_state.o_state_shader_audio_visualization.o_audio_buffer.duration; 
                                         o_state.n_samples_per_second_samplerate = o_state.o_state_shader_audio_visualization.o_audio_buffer.sampleRate; 
                                         o_state.n_samples_total = o_state.o_state_shader_audio_visualization.o_audio_buffer.length; 
-                                        o_state.n_num_of_channels = o_state.o_state_shader_audio_visualization.o_audio_buffer.numberOfChannels; 
+                                        o_state.n_num_of_channels = o_state.o_state_shader_audio_visualization.o_audio_buffer.numberOfChannels;
+
                                         await Promise.all(
                                             [
                                                 o_state.o_js__playpause._f_render(),
                                                 o_state.o_js__playhead._f_render(),
                                             ]
                                         );
+
+                                        o_el_waveform.innerHTML = '';
+                                        o_el_waveform_zoomed.innerHTML = '';
+                                        o_el_waveform?.appendChild(o_state.o_state_shader_audio_visualization.o_canvas);
+                                        o_el_waveform_zoomed?.appendChild(o_state.o_state_shader_audio_visualization_zoomed.o_canvas);
+                                        
+                                        let n_nor_range = o_state.n_seconds_zoom_range / o_state.n_sec_duration;
+
+                                        o_state.o_state_shader_audio_visualization_zoomed.n_nor_start = 0.0; 
+                                        o_state.o_state_shader_audio_visualization_zoomed.n_nor_end = o_state.o_state_shader_audio_visualization_zoomed.n_nor_start + n_nor_range;
+                                        o_state.o_state_shader_audio_visualization_zoomed.b_show_playhead = true;
+                                        o_state.o_state_shader_audio_visualization_zoomed.n_nor_playhead = 0.5;
+                                        o_state.o_state_shader_audio_visualization_zoomed.f_render();
+                                        o_state.o_state_shader_audio_visualization_zoomed.n_amp_peaks = 0.8;
+                                        o_state.o_state_shader_audio_visualization_zoomed.n_amp_avgrms = 0.6;
+                                        // globalThis.onmousemove = function(o_e){
+                                        //     let n_y_nor = o_e.clientY/ globalThis.innerHeight;
+                                        //     let n_x_nor = o_e.clientX/ globalThis.innerWidth;
+                            
+                                        //     o_state.n_amp_peaks = n_y_nor;
+                                        //     o_state.n_amp_avgrms = n_y_nor*0.5;
+                                        //     o_state.n_nor_start = 0.0
+                                        //     o_state.n_nor_end = n_x_nor;
+                                        //     o_state.f_render();
+                                        // }
+
+                                     
         
                                     };
                             
@@ -326,7 +375,12 @@ document.body.appendChild(
                                     class: "playhead", 
                                     a_o: [
                                         {
-                                            innerText: '00:00'
+                                            innerText: (o_state?.o_state_shader_audio_visualization?.o_audio_context?.currentTime) ? 
+                                                [
+                                                    parseInt((o_state?.o_state_shader_audio_visualization?.o_audio_context?.currentTime)/60.).toString().padStart(2, '0'), 
+                                                    parseInt((o_state?.o_state_shader_audio_visualization?.o_audio_context?.currentTime%60.)).toString().padStart(2, '0')
+                                                ].join(':')
+                                                : "00:00"
                                         },
                                         {
                                             s_tag: "input", 
@@ -356,7 +410,13 @@ document.body.appendChild(
                                             }
                                         }, 
                                         {
-                                            innerText: (o_state.n_sec_duration) ? `${parseInt((o_state.n_sec_duration)/60.).toString().padStart(2, '0')}:${parseInt((o_state.n_sec_duration%60.))}` : "00:00"
+                                            innerText: (o_state.n_sec_duration) ? 
+                                            [
+                                                parseInt((o_state.n_sec_duration)/60.).toString().padStart(2, '0'), 
+                                                parseInt((o_state.n_sec_duration%60.)).toString().padStart(2, '0')
+                                            ].join(':')
+                                            : "00:00"
+
                                         }
                                     ]
                                 }
@@ -392,7 +452,13 @@ document.body.appendChild(
                                 }
                             },
                             o_state, 
-                        )
+                        ), 
+                        {
+                            class: 'waveform_zoomed',
+                        },
+                        {
+                            class: "waveform"
+                        }
                     ]
                 },
                 o_mod_notifire.f_o_js(
