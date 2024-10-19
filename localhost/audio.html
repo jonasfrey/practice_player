@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SoundTouchJS Audio Manipulation</title>
+
+
+</head>
+<body>
+
+  <h1>Audio Pitch and Tempo Manipulation with SoundTouchJS</h1>
+
+  <!-- File picker to upload an audio file -->
+  <input type="file" id="audio-file" accept="audio/*" />
+  
+  <!-- Start/Stop buttons -->
+  <button id="start-button" disabled>Start</button>
+  <button id="stop-button" disabled>Stop</button>
+
+  <br><br>
+
+  <!-- Slider for pitch -->
+  <label for="pitch-slider">Pitch (Semitones):</label>
+  <input type="range" id="pitch-slider" min="-12" max="12" step="0.1" value="0" disabled />
+  <span id="pitch-value">0</span>
+
+  <br><br>
+
+  <!-- Slider for tempo -->
+  <label for="tempo-slider">Tempo (Percentage):</label>
+  <input type="range" id="tempo-slider" min="50" max="150" step="1" value="100" disabled />
+  <span id="tempo-value">100%</span>
+
+  <br><br>
+
+  <audio id="audio-element" controls></audio>
+
+  <script type="module">
+    import {
+        AbstractFifoSamplePipe,PitchShifter,RateTransposer,SimpleFilter,SoundTouch,Stretch,WebAudioBufferSource,getWebAudioNode
+    } from "https://cdn.jsdelivr.net/npm/soundtouchjs@0.1.30/dist/soundtouch.min.js";
+
+    let audioElement = document.getElementById('audio-element');
+    let startButton = document.getElementById('start-button');
+    let stopButton = document.getElementById('stop-button');
+    let pitchSlider = document.getElementById('pitch-slider');
+    let tempoSlider = document.getElementById('tempo-slider');
+    let pitchValue = document.getElementById('pitch-value');
+    let tempoValue = document.getElementById('tempo-value');
+    
+    let soundTouch, filter, audioBuffer, sourceNode;
+    let context = new AudioContext();
+    
+    // Function to load the audio file into a buffer
+    function loadAudio(file) {
+      let reader = new FileReader();
+      reader.onload = function (e) {
+        context.decodeAudioData(e.target.result, function (buffer) {
+          audioBuffer = buffer;
+          enableControls();
+        });
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    // Enable the controls after audio is loaded
+    function enableControls() {
+      startButton.disabled = false;
+      stopButton.disabled = false;
+      pitchSlider.disabled = false;
+      tempoSlider.disabled = false;
+    }
+
+    // Initialize SoundTouchJS and play the audio with pitch and tempo adjustment
+    function playAudio() {
+      stopAudio(); // Stop any currently playing audio
+
+      soundTouch = new SoundTouch(context.sampleRate);
+      filter = new SimpleFilter(new WebAudioBufferSource(audioBuffer), soundTouch);
+
+      sourceNode = context.createBufferSource();
+      sourceNode.buffer = audioBuffer;
+
+      let scriptNode = context.createScriptProcessor(4096, 2, 2);
+      scriptNode.onaudioprocess = function (event) {
+        let left = event.outputBuffer.getChannelData(0);
+        let right = event.outputBuffer.getChannelData(1);
+        let samples = new Float32Array(4096 * 2);
+        let framesExtracted = filter.extract(samples, 4096);
+
+        for (let i = 0; i < framesExtracted; i++) {
+          left[i] = samples[2 * i];
+          right[i] = samples[2 * i + 1];
+        }
+      };
+
+      // Connect nodes to the audio context
+      sourceNode.connect(scriptNode);
+      scriptNode.connect(context.destination);
+      sourceNode.start(0);
+
+      // Set initial pitch and tempo
+      setPitch(pitchSlider.value);
+      setTempo(tempoSlider.value / 100);
+    }
+
+    // Stop the audio playback
+    function stopAudio() {
+      if (sourceNode) {
+        sourceNode.stop();
+        sourceNode.disconnect();
+      }
+    }
+
+    // Set pitch adjustment (semitones)
+    function setPitch(semitones) {
+      soundTouch.pitch = Math.pow(2, semitones / 12);
+      pitchValue.textContent = semitones;
+    }
+
+    // Set tempo adjustment
+    function setTempo(tempo) {
+      soundTouch.tempo = tempo;
+      tempoValue.textContent = `${Math.round(tempo * 100)}%`;
+    }
+
+    // Event listeners
+    document.getElementById('audio-file').addEventListener('change', function (event) {
+      let file = event.target.files[0];
+      if (file) {
+        loadAudio(file);
+      }
+    });
+
+    startButton.addEventListener('click', function () {
+      playAudio();
+    });
+
+    stopButton.addEventListener('click', function () {
+      stopAudio();
+    });
+
+    pitchSlider.addEventListener('input', function () {
+      setPitch(pitchSlider.value);
+    });
+
+    tempoSlider.addEventListener('input', function () {
+      setTempo(tempoSlider.value / 100);
+    });
+
+  </script>
+</body>
+</html>

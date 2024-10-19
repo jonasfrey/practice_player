@@ -24,6 +24,20 @@ import {
     f_s_hms__from_n_ts_ms_utc,
 } from "https://deno.land/x/date_functions@1.4/mod.js"
 
+import {
+    AbstractFifoSamplePipe,
+    PitchShifter,
+    RateTransposer,
+    SimpleFilter,
+    SoundTouch,
+    Stretch,
+    WebAudioBufferSource,
+    getWebAudioNode
+}
+// from "https://cdn.jsdelivr.net/npm/soundtouchjs@0.1.30/dist/soundtouch.min.js";
+from "./soundtouch.min.js";
+
+
 
 let a_o_shader = []
 let n_idx_a_o_shader = 0;
@@ -31,9 +45,21 @@ let n_idx_a_o_shader = 0;
 
 
 let o_state = {
+    o_buffer_audio_encoded: null, // Encoded audio data (ArrayBuffer)
+    o_buffer_audio_decoded: null, // Decoded audio data (AudioBuffer)
+    n_sec_duration: 0,            // Duration of the loaded audio file in seconds
+    n_nor_playhead: 0,            // Normalized playhead position (0 to 1)
+    o_audio_context: new (window.AudioContext || window.webkitAudioContext)(),
+    o_node_source: null,          // Source node
+    o_node_script: null,          // Script processor node
+    o_sound_touch: null,          // SoundTouch instance
+    o_filter: null,               // SoundTouch filter
+    b_playing: false,             // Is audio playing
+    n_sec_currentTime: 0,         // Current playback time in seconds
+    n_cents_pitch: 0,             // Pitch adjustment in cents
+    n_nor_tempo: 1.0,             // Normalized tempo (1.0 = normal speed)
     n_seconds_zoom_range: 5,
     n_id_raf_playing: 0, 
-    b_playing: false, 
     a_n_f32_sample_channel0: new Float32Array(),
     a_n_f32_sample_channel1: new Float32Array(),
     o_audio_buffer: null,
@@ -50,7 +76,6 @@ let o_state = {
     n_playhead_nor_local: 0.,
     o_state_shader_audio_visualization: null,
     o_state_shader_audio_visualization_zoomed: null,
-    n_sec_duration:null,
     n_samples_per_second_samplerate:null,
     n_samples_total:null,
     n_num_of_channels:null,
@@ -118,44 +143,41 @@ f_add_css(
 
 
 
+let f_delete_audio_stuff = function(){
+    f_pause_audio();
+    if (o_state.o_buffer_audio_encoded) {
+    o_state.o_buffer_audio_encoded = null;
+    }
+    if (o_state.o_buffer_audio_decoded) {
+    o_state.o_buffer_audio_decoded = null;
+    }
+    if (o_state.o_node_source) {
+    o_state.o_node_source = null;
+    }
+    o_state.o_sound_touch = null;
+    o_state.o_filter = null;
+    o_state.n_sec_currentTime = 0;
+    o_state.n_nor_playhead = 0;
+    o_state.n_sec_duration = 0;
+    console.log('Audio data deleted.');
+}
+// Load audio from buffer (encoded audio data)
+let f_load_audio_from_o_buffer_audio_encoded = async function(o_buffer_audio_encoded) {
+    f_delete_audio_stuff();
+    o_state.o_buffer_audio_encoded = o_buffer_audio_encoded;
+    try {
+        const buffer = await o_state.o_audio_context.decodeAudioData(o_buffer_audio_encoded);
+        o_state.o_buffer_audio_decoded = buffer;
+        o_state.n_sec_duration = buffer.duration;
+        o_state.n_samples_per_second_samplerate = o_buffer_decoded_audio.sampleRate; 
+        o_state.n_samples_total = o_buffer_decoded_audio.length; 
+        o_state.n_num_of_channels = o_buffer_decoded_audio.numberOfChannels;
+        console.log('Audio data loaded. Duration:', o_state.n_sec_duration, 'seconds');
+    } catch (error) {
+        console.error('Error decoding audio data:', error);
+    }
+}
 
-// Determine the current domain
-const s_hostname = window.location.hostname;
-
-// Create the WebSocket URL, assuming ws for http and wss for https
-const s_protocol_ws = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-const s_url_ws = `${s_protocol_ws}//${s_hostname}:${window.location.port}`;
-
-// Create a new WebSocket instance
-const o_ws = new WebSocket(s_url_ws);
-
-// Set up event listeners for your WebSocket
-o_ws.onopen = function(o_e) {
-    console.log({
-        o_e, 
-        s: 'o_ws.onopen called'
-    })
-};
-
-o_ws.onerror = function(o_e) {
-    console.log({
-        o_e, 
-        s: 'o_ws.onerror called'
-    })
-};
-
-o_ws.onmessage = function(o_e) {
-    console.log({
-        o_e, 
-        s: 'o_ws.onmessage called'
-    })
-    o_state.a_o_msg.push(o_e.data);
-    o_state?.o_js__a_o_mod?._f_render();
-
-};
-window.addEventListener('pointerdown', (o_e)=>{
-    o_ws.send('pointerdown on client')
-})
 
 let f_raf_playing = async function(){
 
@@ -203,50 +225,93 @@ let f_o_assigned = function (s_name, v, o_to_assign_to = o_state) {
     })[s_name];
   };
   
-// let f_play_at_seconds = function(n_seconds){
-//         if(o_state.o_audio_context_source){
-//             o_state.o_audio_context_source.stop();
-//         }
-//         // Function to skip to a specific time in the audio
-//     function skipTo(timeInSeconds) {
-//         if (audioBuffer) {
-//             if (currentSource) {
-//                 currentSource.stop();  // Stop the current audio
-//             }
-            
-//             // Start playing from the specified time
-//             playAudio(timeInSeconds);
-//         }
-//     }
-// }
 
 
-let f_play_audio = function(n_sec_start){
-    cancelAnimationFrame(o_state.n_id_raf_playing);
-
-    if(!o_state.o_audio_context_source){
-        // Create a buffer source for the new audio
-        o_state.o_audio_context_source = o_state.o_state_shader_audio_visualization.o_audio_context.createBufferSource();
-        o_state.o_audio_context_source.buffer = o_state.o_state_shader_audio_visualization.o_audio_buffer;
-        // Connect the source to the AudioContext's destination (the speakers)
-        o_state.o_audio_context_source.connect(o_state.o_state_shader_audio_visualization.o_audio_context.destination);
-
-        console.log(o_state.n_playhead_nor_global*o_state.n_sec_duration)
-        o_state.o_audio_context_source.start(0, n_sec_start);
-        o_state.n_id_raf_playing = requestAnimationFrame(f_raf_playing);
+// Shift pitch by n cents
+function f_shift_pitch(n_cents) {
+    o_state.n_cents_pitch = parseFloat(n_cents);
+    let semitones = o_state.n_cents_pitch / 100;
+    let pitch = Math.pow(2, semitones / 12);
+    if (o_state.o_sound_touch) {
+        o_state.o_sound_touch.pitch = pitch;
     }
 }
-o_state.f_play_audio = f_play_audio
-let f_pause_audio = function(){
-    o_state.n_playhead_nor_global = o_state.o_state_shader_audio_visualization.o_audio_context.currentTime / o_state.n_sec_duration;
-    console.log(o_state.n_playhead_nor_global);
-    if (o_state.o_audio_context_source) {
-        o_state.o_audio_context_source.stop();  // Stop the current audio playback
-        o_state.o_audio_context_source.disconnect();  // Optionally, disconnect to clean up
-        o_state.o_audio_context_source = null;  // Reset the currentSource reference
+
+// Change tempo (normalized)
+let f_change_tempo = function(n_normalized) {
+    o_state.n_nor_tempo = parseFloat(n_normalized);
+    if (o_state.o_sound_touch) {
+        o_state.o_sound_touch.tempo = o_state.n_nor_tempo;
     }
-    cancelAnimationFrame(o_state.n_id_raf_playing);
 }
+      
+// Play audio from a specific offset
+let f_play_audio = function(n_second_offset) {
+    if (!o_state.o_buffer_audio_decoded) {
+      console.error('Audio buffer is not loaded.');
+      return;
+    }
+
+    if (o_state.b_playing) {
+      f_pause_audio();
+    }
+
+    // Create a new SoundTouch instance
+    o_state.o_sound_touch = new SoundTouch(o_state.o_audio_context.sampleRate);
+    f_shift_pitch(o_state.n_cents_pitch); // Apply current pitch
+    f_change_tempo(o_state.n_nor_tempo);  // Apply current tempo
+
+    // Create source and filter
+    let source = new WebAudioBufferSource(o_state.o_buffer_audio_decoded);
+    o_state.o_filter = new SimpleFilter(source, o_state.o_sound_touch);
+
+    // Set the position to start from (in samples)
+    source.position = n_second_offset * o_state.o_audio_context.sampleRate;
+
+    // Create script processor
+    o_state.o_node_script = o_state.o_audio_context.createScriptProcessor(4096, 0, 2);
+
+    o_state.o_node_script.onaudioprocess = function(event) {
+      let left = event.outputBuffer.getChannelData(0);
+      let right = event.outputBuffer.getChannelData(1);
+
+      let framesExtracted = o_state.o_filter.extract(4096);
+
+      if (framesExtracted === 0) {
+        // End of audio
+        o_state.o_node_script.disconnect();
+        o_state.o_node_script = null;
+        o_state.b_playing = false;
+        o_state.n_sec_currentTime = 0;
+        o_state.n_nor_playhead = 0;
+        return;
+      }
+
+      let samples = o_state.o_filter.outputBuffer;
+      for (let i = 0; i < framesExtracted * 2; i += 2) {
+        left[i / 2] = samples[i];
+        right[i / 2] = samples[i + 1];
+      }
+
+      // Update current time and normalized playhead
+      o_state.n_sec_currentTime += (framesExtracted / o_state.o_audio_context.sampleRate) / o_state.n_nor_tempo;
+      o_state.n_nor_playhead = o_state.n_sec_currentTime / o_state.n_sec_duration;
+    };
+
+    // Connect script node to destination
+    o_state.o_node_script.connect(o_state.o_audio_context.destination);
+
+    o_state.b_playing = true;
+  };
+// Pause audio playback
+let f_pause_audio = function() {
+    if (o_state.b_playing && o_state.o_node_script) {
+        o_state.o_node_script.disconnect();
+        o_state.o_node_script = null;
+        o_state.b_playing = false;
+    }
+}
+
 
 document.body.appendChild(
     await f_o_html__and_make_renderable(
@@ -293,13 +358,14 @@ document.body.appendChild(
                                     const reader = new FileReader();
                             
                                     reader.onload = async function(e) {
-
-
                                         const o_array_buffer_encoded_audio_data = e.target.result;
+                                        await f_load_audio_from_o_buffer_audio_encoded(o_array_buffer_encoded_audio_data);
+
+                                        
                                         let o_el_waveform_zoomed = document.querySelector('.waveform_zoomed');
                                         let o_el_waveform = document.querySelector('.waveform');
                                         o_state.o_state_shader_audio_visualization = await f_o_state_webgl_shader_audio_visualization({
-                                            o_array_buffer_encoded_audio_data,
+                                            a_n_f32_audio_sample:o_state.o_buffer_audio_decoded.getChannelData(0),
                                             n_scl_x_canvas : o_el_waveform?.clientWidth,
                                             n_scl_y_canvas : o_el_waveform?.clientHeight, 
                                             a_n_rgba_color_amp_peaks: [1., 0, 0, 1.],
@@ -315,16 +381,12 @@ document.body.appendChild(
                                             f_play_audio(o_state.n_playhead_nor_global*o_state.n_sec_duration);
                                         }
                                         o_state.o_state_shader_audio_visualization_zoomed = await f_o_state_webgl_shader_audio_visualization({
-                                            a_n_f32_audio_sample:o_state.o_state_shader_audio_visualization.a_n_f32_audio_sample,
+                                            a_n_f32_audio_sample:o_state.o_buffer_audio_decoded.getChannelData(0),
                                             n_scl_x_canvas : o_el_waveform_zoomed?.clientWidth,
                                             n_scl_y_canvas : o_el_waveform_zoomed?.clientHeight, 
                                             a_n_rgba_color_amp_peaks: [1., 0, 0, 1.],
                                             a_n_rgba_color_amp_avg: [1, 1, 0, 1]
                                         }); 
-                                        o_state.n_sec_duration = o_state.o_state_shader_audio_visualization.o_audio_buffer.duration; 
-                                        o_state.n_samples_per_second_samplerate = o_state.o_state_shader_audio_visualization.o_audio_buffer.sampleRate; 
-                                        o_state.n_samples_total = o_state.o_state_shader_audio_visualization.o_audio_buffer.length; 
-                                        o_state.n_num_of_channels = o_state.o_state_shader_audio_visualization.o_audio_buffer.numberOfChannels;
 
                                         await Promise.all(
                                             [
