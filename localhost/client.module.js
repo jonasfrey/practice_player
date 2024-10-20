@@ -351,6 +351,7 @@ document.body.appendChild(
                                     o_state.o_state_shader_audio_visualization_zoomed.f_delete_webgl_stuff();
                                     o_state.o_state_shader_audio_visualization_zoomed = null;
                                 }
+                                
                                 await o_state.o_js__playpause._f_render();
                                 const file = o_e.target.files[0];
                                 

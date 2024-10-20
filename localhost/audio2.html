@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Audio Player with AudioWorkletNode</title>
+    
+</head>
+<body>
+    <input type="file" id="audioFileInput" accept="audio/*">
+    <br>
+    <button id="playButton" disabled>Play</button>
+    <button id="stopButton" disabled>Stop</button>
+
+    <script type="module">
+    import {
+        AbstractFifoSamplePipe,PitchShifter,RateTransposer,SimpleFilter,SoundTouch,Stretch,WebAudioBufferSource,getWebAudioNode
+    } from "https://cdn.jsdelivr.net/npm/soundtouchjs@0.1.30/dist/soundtouch.min.js";
+        let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        let audioBuffer;
+        let isPlaying = false;
+        let sourceNode;
+        let workletNode;
+
+        // Define the AudioWorkletProcessor code as a string
+        const processorCode = `
+            class BypassProcessor extends AudioWorkletProcessor {
+                process(inputs, outputs) {
+                    const input = inputs[0];
+                    const output = outputs[0];
+                    if (input && input.length > 0) {
+                        for (let channel = 0; channel < input.length; ++channel) {
+                            output[channel].set(input[channel]);
+                        }
+                    }
+                    return true; // Keep the processor alive
+                }
+            }
+            registerProcessor('bypass-processor', BypassProcessor);
+        `;
+
+        // Create a Blob URL from the processor code
+        const blob = new Blob([processorCode], { type: 'application/javascript' });
+        const moduleURL = URL.createObjectURL(blob);
+
+        // Load the AudioWorklet module
+        audioContext.audioWorklet.addModule(moduleURL).then(() => {
+            // Handle file input change event
+            document.getElementById('audioFileInput').addEventListener('change', function(event) {
+                let file = event.target.files[0];
+                if (file) {
+                    let reader = new FileReader();
+                    reader.onload = function(e) {
+                        let arrayBuffer = e.target.result;
+                        audioContext.decodeAudioData(arrayBuffer, function(buffer) {
+                            audioBuffer = buffer;
+                            document.getElementById('playButton').disabled = false;
+                        }, function(e) {
+                            console.error('Error decoding audio data', e);
+                        });
+                    };
+                    reader.readAsArrayBuffer(file);
+                }
+            });
+
+            // Handle Play button click event
+            document.getElementById('playButton').addEventListener('click', function() {
+                if (!isPlaying && audioBuffer) {
+                    sourceNode = audioContext.createBufferSource();
+                    sourceNode.buffer = audioBuffer;
+
+                    // Create the AudioWorkletNode
+                    workletNode = new AudioWorkletNode(audioContext, 'bypass-processor');
+
+                    // Connect the nodes
+                    sourceNode.connect(workletNode).connect(audioContext.destination);
+
+                    sourceNode.start(0);
+                    isPlaying = true;
+                    document.getElementById('stopButton').disabled = false;
+                    sourceNode.onended = function() {
+                        isPlaying = false;
+                        document.getElementById('stopButton').disabled = true;
+                    };
+                }
+            });
+
+            // Handle Stop button click event
+            document.getElementById('stopButton').addEventListener('click', function() {
+                if (isPlaying) {
+                    sourceNode.stop(0);
+                    sourceNode.disconnect();
+                    workletNode.disconnect();
+                    isPlaying = false;
+                    document.getElementById('stopButton').disabled = true;
+                }
+            });
+        }).catch(e => {
+            console.error('Failed to load AudioWorklet module', e);
+        });
+
+        globalThis.f_play_song_from = function(n_seconds) {
+    if (audioBuffer) {
+        // Properly clean up previous audio nodes
+        if (isPlaying) {
+            sourceNode.stop(0);  // Stop the current playback
+            sourceNode.disconnect();  // Disconnect the source node
+            if (workletNode) {
+                workletNode.disconnect(); // Disconnect the worklet node
+            }
+        }
+
+        // Create a new source node and set playback from the specified position
+        sourceNode = audioContext.createBufferSource();
+        sourceNode.buffer = audioBuffer;
+
+        // Check if workletNode already exists, disconnect if necessary, then recreate it
+        if (workletNode) {
+            workletNode.disconnect();
+        }
+        workletNode = new AudioWorkletNode(audioContext, 'bypass-processor');
+
+        // Connect the nodes
+        sourceNode.connect(workletNode).connect(audioContext.destination);
+
+        // Start the audio from the specified offset
+        sourceNode.start(0, n_seconds);
+
+        isPlaying = true;
+        document.getElementById('stopButton').disabled = false;
+
+        sourceNode.onended = function() {
+            isPlaying = false;
+            document.getElementById('stopButton').disabled = true;
+        };
+    }
+};
+
+
+    </script>
+</body>
+</html>
